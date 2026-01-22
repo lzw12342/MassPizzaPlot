@@ -1,1 +1,15 @@
-![image](![c28308a4e451d6cfafc1df809fd75a6b](https://github.com/user-attachments/assets/6bfc0115-6967-4b11-82ab-feb6c730102c))
+使用本工具可以绘制如下图样式的图![image](img1.png)
+
+# 使用指南
+
+**创建绘制项**
+
+![image](img2.png)
+
+**自定义层区域**
+
+![image](img3.png)
+
+**设置数据**
+
+![image](img4.png)
