@@ -18,6 +18,8 @@ class PizzaPlotUI:
         self._preview_canvas = {}
         self.export_cb_with_plot = tk.BooleanVar(value=False)
 
+        
+
         self.logic.set_refresh_hook(self._rebuild_ui_list)
         self.logic.set_rebuild_ui_hook(self._rebuild_ui_list)
 
@@ -26,7 +28,12 @@ class PizzaPlotUI:
         # 跟踪上次有效刻度配置
         self.last_valid_tick_config = (False, [])
 
+        self.last_valid_layer_config = [] 
+
         self._init_layout()
+
+        self._update_default_layer_config()
+        self._update_layer_display()  # 同时更新显示标签
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
 
@@ -195,13 +202,22 @@ class PizzaPlotUI:
             if self.enable_custom_ticks_var.get():
                 cb_ticks = self.last_valid_tick_config[1]
                 cb_tick_str = ",".join(map(str, cb_ticks)) if cb_ticks else ""
+
+            layer_str = ""
+            if self.custom_layer_var.get():
+                layer_str = ",".join(map(str, self.last_valid_layer_config))
+            else:
+                # 未启用时也传递均分值（确保新图初始状态正确）
+                m = int(self.current_m.get())
+                default_layers = [i / m for i in range(1, m)]
+                layer_str = ",".join(map(str, default_layers))
             
             config = self.logic.parse_config(
                 m_str=self.current_m.get(),
                 n_str=self.current_n.get(),
                 tick_str=self.tick_entry.get().strip(),
                 custom_layer=self.custom_layer_var.get(),
-                layer_str="",
+                layer_str=layer_str,
                 cb_font_str=self.cb_font_entry.get().strip(),
                 enable_custom_ticks=self.enable_custom_ticks_var.get(),
                 cb_tick_str=cb_tick_str  # 使用上面生成的刻度字符串
@@ -219,19 +235,25 @@ class PizzaPlotUI:
     def _on_modify_m_click(self):
         def confirm():
             try:
-                # 1. 获取修改前的旧层数（关键：用于对比）
                 old_m = int(self.current_m.get())
-                # 2. 获取新输入的层数并校验
                 new_m = int(entry.get().strip())
                 if new_m < 2:
                     raise ValueError("层数需≥2")
                 
-                # 3. 仅当数值真正变化时，才更新并清空自定义层显示
                 if new_m != old_m:
                     self.current_m.set(str(new_m))
                     self._log(f"层数修改为{new_m}")
+                    
+                    # ✅ 自动生成新的默认配置（不删除用户历史配置）
+                    self._update_default_layer_config()
+                    
+                    # 如果当前启用了自定义，提示用户配置已更新
+                    if self.custom_layer_var.get():
+                        self._log(f"自定义层区域已自动更新：{self.last_valid_layer_config}")
+                    
                     self.logic.delete_all_plots()
                     self._rebuild_ui_list()
+                    self._update_layer_display()
                 win.destroy()
             except ValueError as e:
                 if "层数需≥2" in str(e):
@@ -290,45 +312,59 @@ class PizzaPlotUI:
         self._preview_canvas.clear()
 
     def _on_modify_layer_click(self):
+        """修改层区域（层数≥2都允许）"""
         m = int(self.current_m.get())
-        if m == 2:
-            messagebox.showinfo("提示", "层数=2 时无需自定义层区域")
-            return
         win = tk.Toplevel(self.root)
         win.title("修改层区域")
-        win.geometry("300x125")
+        # ✅ 根据层数动态调整窗口大小
+        win.geometry("350x140" if m > 3 else "300x125")
         win.resizable(False, False)
         
-        ttk.Label(win, text=f"请输入{m-1}个0~1之间的数字（英文逗号分隔）：").pack(pady=10)
-        ent = ttk.Entry(win, width=25)
+        # ✅ 动态提示文本
+        ttk.Label(win, text=f"请输入{m-1}个0~1之间的分界点（英文逗号分隔）：").pack(pady=10)
+        
+        ent = ttk.Entry(win, width=30)
+        # ✅ 始终填充当前配置（默认或上次输入）
+        ent.insert(0, ",".join([f"{x:.3f}" for x in self.last_valid_layer_config]))
         ent.pack(pady=5)
         
         def confirm():
             try:
                 vals = [float(x.strip()) for x in ent.get().split(',')]
                 if len(vals) != m - 1:
-                    raise ValueError
-                # 验证数值范围
-                for val in vals:
-                    if not (0 <= val <= 1):
-                        raise ValueError("数值需在0~1之间")
-                # 更新所有图项的层区域
-                for pid in list(self.logic.plot_items.keys()):
-                    self.logic.plot_items[pid]['config']['layer_points'] = vals
-                self.logic.regenerate_all_plots()
-                self._rebuild_ui_list()
-                self._log("层区域已更新并重绘所有图")
+                    raise ValueError(f"数量错误")
                 
-                # 👇 新增：仅在修改成功后更新显示Label
-                layer_str = ", ".join([f"{x:.2f}" for x in vals])
-                self.layer_display_label.config(text=f"当前层区域：{layer_str}")
+                # 验证范围
+                if not all(0 <= v <= 1 for v in vals):
+                    raise ValueError("范围错误")
                 
+                # 验证单调递增
+                if not all(vals[i] < vals[i+1] for i in range(len(vals)-1)):
+                    raise ValueError("非递增")
+                
+                # ✅ 保存新配置
+                self.last_valid_layer_config = vals
+                self._log(f"层区域更新：{vals}")
+                
+                # 如果当前启用了自定义，立即应用
+                if self.custom_layer_var.get():
+                    for pid in list(self.logic.plot_items.keys()):
+                        self.logic.plot_items[pid]['config']['layer_points'] = vals
+                    self.logic.regenerate_all_plots()
+                    self._rebuild_ui_list()
+                
+                self._update_layer_display()
                 win.destroy()
+                
             except ValueError as e:
-                if "数值需在0~1之间" in str(e):
-                    messagebox.showerror("错误", str(e))
+                if "数量错误" in str(e):
+                    messagebox.showerror("错误", f"需要输入{m-1}个数字！")
+                elif "范围错误" in str(e):
+                    messagebox.showerror("错误", "所有数值必须在0~1之间！")
+                elif "非递增" in str(e):
+                    messagebox.showerror("错误", "数值必须严格递增！")
                 else:
-                    messagebox.showerror("错误", f"需输入{m-1}个0~1之间的合法数字！")
+                    messagebox.showerror("错误", "请输入有效的数字！")
         
         ttk.Button(win, text="确认", command=confirm).pack(pady=5)
 
@@ -454,13 +490,14 @@ class PizzaPlotUI:
     def _on_preview_cb_click(self):
         try:
             cb_font = int(self.cb_font_entry.get().strip())
-            # 从last_valid_tick_config获取刻度（不再使用cb_tick_entry）
             cb_ticks = self.last_valid_tick_config[1] if self.enable_custom_ticks_var.get() else []
             fig = self.logic.generate_colorbar_fig(cb_font, cb_ticks)
+            
             cb_win = tk.Toplevel(self.root)
             cb_win.title("Colorbar预览")
             cb_win.geometry("500x500")
             cb_win.transient(self.root)
+            
             canvas = FigureCanvasTkAgg(fig, master=cb_win)
             canvas.draw()
             canvas_widget = canvas.get_tk_widget()
@@ -468,24 +505,18 @@ class PizzaPlotUI:
 
             def close_win():
                 try:
-                    plt.close(fig)
-                    canvas.figure = None
+                    # ✅ 正确的清理顺序：
                     canvas_widget.destroy()
+                    canvas.figure = None
+                    plt.close(fig)
                     cb_win.destroy()
                 except Exception as e:
                     print(f"关闭Colorbar窗口时出错: {e}")
                     cb_win.destroy()
+            
             ttk.Button(cb_win, text="关闭", command=close_win).pack(pady=10)
             cb_win.protocol("WM_DELETE_WINDOW", close_win)
-            ttk.Button(cb_win, text="关闭", command=close_win).pack(pady=10)
-        
-            # ✅ 增强关闭协议
-            def on_window_close():
-                close_win()
-                import gc
-                gc.collect()
-        
-            cb_win.protocol("WM_DELETE_WINDOW", on_window_close)
+            
         except ValueError as e:
             messagebox.showerror("错误", str(e))
             self._log(f"预览Colorbar失败：{str(e)}")
@@ -494,7 +525,8 @@ class PizzaPlotUI:
     def _on_preview_click(self, plot_id):
         try:
             cb_ticks = self.last_valid_tick_config[1] if self.enable_custom_ticks_var.get() else []
-            fig = self.logic.generate_plot_fig(plot_id,cb_custom_ticks=cb_ticks, is_preview=False)
+            fig = self.logic.generate_plot_fig(plot_id, cb_custom_ticks=cb_ticks, is_preview=False)
+            
             preview_win = tk.Toplevel(self.root)
             preview_win.title(f"图{plot_id.split('_')[1]} 预览")
             preview_win.geometry("600x600")
@@ -507,22 +539,25 @@ class PizzaPlotUI:
 
             def close_win():
                 try:
-                    plt.close(fig)  # 关闭matplotlib图形
-                    canvas.figure = None  # ✅ 断开引用
-                    canvas_widget.destroy()  # ✅ 销毁Canvas
-                    preview_win.destroy()  # 关闭窗口
+                    # ✅ 正确的清理顺序：
+                    # 1. 先销毁 Tkinter Canvas 组件
+                    canvas_widget.destroy()
+                    
+                    # 2. 断开 canvas 与 figure 的引用（这应在 plt.close 之前或之后都可以，但必须在 canvas 销毁后）
+                    canvas.figure = None
+                    
+                    # 3. 关闭 matplotlib figure（触发关闭事件）
+                    plt.close(fig)
+                    
+                    # 4. 最后关闭窗口
+                    preview_win.destroy()
                 except Exception as e:
                     print(f"关闭窗口时出错: {e}")
                     preview_win.destroy()
+            
             ttk.Button(preview_win, text="关闭", command=close_win).pack(pady=10)
             preview_win.protocol("WM_DELETE_WINDOW", close_win)
-                # ✅ 新增：窗口关闭后强制垃圾回收
-            def on_window_close():
-                close_win()
-                import gc
-                gc.collect()  # 强制回收内存
-        
-            preview_win.protocol("WM_DELETE_WINDOW", on_window_close)
+            
         except ValueError as e:
             messagebox.showerror("错误", str(e))
             self._log(f"预览失败：{str(e)}")
@@ -585,9 +620,44 @@ class PizzaPlotUI:
             self._update_btn_states()
 
     def _toggle_layer_entry(self):
-        # 👇 关键修改2：根据勾选状态切换按钮启用/禁用
+        """勾选/取消自定义层区域（不清空配置，只切换使用状态）"""
         is_enabled = self.custom_layer_var.get()
         self.modify_layer_btn.config(state='normal' if is_enabled else 'disabled')
+        
+        # 如果没有图项，只更新显示
+        if not self.logic.plot_items:
+            self._update_layer_display()
+            return
+        
+        # 获取当前层数，用于计算默认均分值
+        m = int(self.current_m.get())
+        default_layers = [i / m for i in range(1, m)]
+        
+        # 根据启用/禁用状态确定目标层配置
+        target_layers = self.last_valid_layer_config if is_enabled else default_layers
+        
+        # ✅ 检查是否真的需要更新配置（避免不必要的重绘）
+        needs_update = False
+        for pid in list(self.logic.plot_items.keys()):
+            current_config = self.logic.plot_items[pid]['config']['layer_points']
+            if current_config != target_layers:
+                needs_update = True
+                self.logic.plot_items[pid]['config']['layer_points'] = target_layers
+        
+        # ✅ 只有当配置有实际变化时才执行重绘和UI更新
+        if needs_update:
+            status_msg = "恢复均分状态" if not is_enabled else f"应用自定义：{self.last_valid_layer_config}"
+            self._log(f"自定义层区域{'取消' if not is_enabled else '启用'}，{status_msg}")
+            
+            # 重绘所有图
+            self.logic.regenerate_all_plots(
+                cb_custom_ticks=self.last_valid_tick_config[1] if self.enable_custom_ticks_var.get() else []
+            )
+            self._rebuild_ui_list()
+            self._update_layer_display()
+        else:
+            # 配置没有变化，只记录日志
+            self._log(f"自定义层区域{'取消' if not is_enabled else '启用'}（配置已是{'均分' if not is_enabled else '自定义'}）")
 
     def _toggle_ticks_entry(self):
         if self.enable_custom_ticks_var.get():
@@ -765,6 +835,26 @@ class PizzaPlotUI:
         # 退出主循环
         self.root.quit()
         self.root.destroy()
+
+    def _update_layer_display(self):
+        """更新层区域显示标签（区分默认/自定义/禁用状态）"""
+        m = int(self.current_m.get())
+        default_layers = [i / m for i in range(1, m)]
+        
+        if self.custom_layer_var.get():
+            # 启用自定义
+            layer_str = ", ".join([f"{x:.3f}" for x in self.last_valid_layer_config])
+            self.layer_display_label.config(text=f"✨ 自定义: {layer_str}")
+        else:
+            # 禁用状态，显示默认均分
+            layer_str = ", ".join([f"{x:.3f}" for x in default_layers])
+            self.layer_display_label.config(text=f"📐 默认: {layer_str}")
+
+    def _update_default_layer_config(self):
+        """根据当前层数生成并保存默认均分配置"""
+        m = int(self.current_m.get())
+        # 如果层数=2，生成 [0.5]；层数=3，生成 [0.33, 0.67]
+        self.last_valid_layer_config = [i / m for i in range(1, m)]
 
 
 # -------------------- 启动 --------------------
