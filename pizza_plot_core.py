@@ -4,7 +4,7 @@ from matplotlib.patches import Polygon
 
 def generate_pizza_plot(
         m_layers, n_blocks, layer_points, data,
-        vmin, vmax, tick_count=9,figsize=(2, 2), dpi=80):
+        vmin, vmax, tick_count=9,figsize=(2, 2), dpi=64):
     if m_layers < 2 or n_blocks < 2:
         raise ValueError("层数和块数必须≥2")
     if data.shape != (m_layers, n_blocks):
@@ -28,7 +28,7 @@ def generate_pizza_plot(
     all_points = np.array([0] + layer_points + [1.0]) * r_max
     r_inner = all_points[:-1]
     r_outer = all_points[1:]
-    theta = np.linspace(0, 2 * np.pi, n_blocks + 1)
+    theta = np.linspace(0, 2 * np.pi, n_blocks + 1)[::-1]
     norm = plt.Normalize(vmin, vmax)
     patches = []
 
@@ -50,7 +50,8 @@ def generate_pizza_plot(
 
     ax.set_xlim(-r_max, r_max)
     ax.set_ylim(-r_max, r_max)
-    tick_vals = np.linspace(-r_max, r_max, tick_count)
+    edge = np.linspace(-r_max, r_max, tick_count+2)
+    tick_vals = edge[1:-1]
     ax.set_xticks(tick_vals)
     ax.set_yticks(tick_vals)
 

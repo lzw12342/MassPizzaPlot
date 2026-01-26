@@ -138,10 +138,13 @@ class PizzaPlotUI:
         
         row += 1
         # 刻度数量相关布局（保持不变）
+        # 原来 tick_entry 删掉，换成标签+按钮
         ttk.Label(self.cloud_tab, text="刻度数量：").grid(row=row, column=0, sticky='w', padx=5, pady=5)
-        self.tick_entry = ttk.Entry(self.cloud_tab, width=10)
-        self.tick_entry.insert(0, "9")
-        self.tick_entry.grid(row=row, column=1, padx=5, pady=5)
+        self.current_tick = tk.StringVar(value="9")
+        self.tick_label = ttk.Label(self.cloud_tab, textvariable=self.current_tick)
+        self.tick_label.grid(row=row, column=1, padx=5, pady=5)
+        self.modify_tick_btn = ttk.Button(self.cloud_tab, text="修改", command=self._on_modify_tick_click)
+        self.modify_tick_btn.grid(row=row, column=2, padx=5, pady=5)
 
     def _init_cb_tab_layout(self):
         """初始化Colorbar标签页布局（完全匹配需求：勾选框+刻度显示+修改按钮同一行）"""
@@ -215,7 +218,7 @@ class PizzaPlotUI:
             config = self.logic.parse_config(
                 m_str=self.current_m.get(),
                 n_str=self.current_n.get(),
-                tick_str=self.tick_entry.get().strip(),
+                tick_str=int(self.current_tick.get()),
                 custom_layer=self.custom_layer_var.get(),
                 layer_str=layer_str,
                 cb_font_str=self.cb_font_entry.get().strip(),
@@ -539,22 +542,14 @@ class PizzaPlotUI:
 
             def close_win():
                 try:
-                    # ✅ 正确的清理顺序：
-                    # 1. 先销毁 Tkinter Canvas 组件
-                    canvas_widget.destroy()
-                    
-                    # 2. 断开 canvas 与 figure 的引用（这应在 plt.close 之前或之后都可以，但必须在 canvas 销毁后）
-                    canvas.figure = None
-                    
-                    # 3. 关闭 matplotlib figure（触发关闭事件）
-                    plt.close(fig)
-                    
-                    # 4. 最后关闭窗口
+                    canvas_widget.destroy()   # 1. 毁 Tk 组件
+                    canvas.figure = None      # 2. 断 matplotlib 引用
+                    plt.close(fig)            # 3. 关 figure（复用型 figure 可省略这步）
+                except Exception:
+                    pass
+                finally:
                     preview_win.destroy()
-                except Exception as e:
-                    print(f"关闭窗口时出错: {e}")
-                    preview_win.destroy()
-            
+                        
             ttk.Button(preview_win, text="关闭", command=close_win).pack(pady=10)
             preview_win.protocol("WM_DELETE_WINDOW", close_win)
             
@@ -855,6 +850,40 @@ class PizzaPlotUI:
         m = int(self.current_m.get())
         # 如果层数=2，生成 [0.5]；层数=3，生成 [0.33, 0.67]
         self.last_valid_layer_config = [i / m for i in range(1, m)]
+
+    def _on_modify_tick_click(self):
+        def confirm():
+            try:
+                old_tick = int(self.current_tick.get())
+                new_tick = int(entry.get().strip())
+                if new_tick < 3:
+                    raise ValueError("刻度数量必须≥3")
+                if new_tick != old_tick:              # 只有真变了才干活
+                    self.current_tick.set(str(new_tick))
+                    self._log(f"刻度数量修改为{new_tick}")
+                    # 1. 更新所有已有图项的 config
+                    for item in self.logic.plot_items.values():
+                        item['config']['tick_count'] = new_tick
+                    # 2. 重绘所有图
+                    cb_ticks = self.last_valid_tick_config[1] if self.enable_custom_ticks_var.get() else []
+                    self.logic.regenerate_all_plots(cb_custom_ticks=cb_ticks)
+                    self._rebuild_ui_list()
+                win.destroy()
+            except ValueError as e:
+                if "必须≥3" in str(e):
+                    messagebox.showerror("错误", str(e))
+                else:
+                    messagebox.showerror("错误", "请输入有效整数（≥3）")
+
+        win = tk.Toplevel(self.root)
+        win.title("修改刻度数量")
+        win.geometry("200x125")
+        win.resizable(False, False)
+        ttk.Label(win, text="请输入刻度数量（≥3）：").pack(pady=10)
+        entry = ttk.Entry(win, width=10)
+        entry.insert(0, self.current_tick.get())
+        entry.pack(pady=5)
+        ttk.Button(win, text="确认", command=confirm).pack(pady=5)
 
 
 # -------------------- 启动 --------------------

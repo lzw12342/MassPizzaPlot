@@ -154,6 +154,7 @@ class PizzaPlotLogic:
             data=data_to_plot,  # 取消时为原始数据，启用时为钳位后数据
             vmin=plot_vmin,
             vmax=plot_vmax,
+            tick_count=config["tick_count"],
             figsize=(2, 2) if is_preview else (7, 7),
             dpi=80 if is_preview else 100,
         )
